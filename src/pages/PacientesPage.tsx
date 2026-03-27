@@ -25,7 +25,7 @@ export default function PacientesPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormData>(emptyForm);
-  const [errors, setErrors] = useState<Partial<Record<keyof FormData | 'documento', string>>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof FormData, string>>>({});
   const [search, setSearch] = useState('');
 
   const filtered = pacientes.filter(p =>
@@ -35,17 +35,20 @@ export default function PacientesPage() {
   );
 
   function validate(): boolean {
-    const e: Partial<Record<keyof FormData | 'documento', string>> = {};
+    const e: Partial<Record<keyof FormData, string>> = {};
     if (!form.nomeCompleto.trim()) e.nomeCompleto = 'Nome é obrigatório';
     if (!form.dataNascimento) e.dataNascimento = 'Data de nascimento é obrigatória';
-    const hasCpf = form.cpf.replace(/\D/g, '').length > 0;
-    const hasCns = form.cns.replace(/\D/g, '').length > 0;
-    if (!hasCpf && !hasCns) {
-      e.documento = 'Informe CPF ou CNS';
-    } else {
-      if (hasCpf && !validarCPF(form.cpf)) e.cpf = 'CPF inválido';
-      if (hasCns && !validarCNS(form.cns)) e.cns = 'CNS inválido';
+    
+    const cpfDigits = form.cpf.replace(/\D/g, '');
+    if (!cpfDigits) {
+      e.cpf = 'CPF é obrigatório';
+    } else if (!validarCPF(cpfDigits)) {
+      e.cpf = 'CPF inválido';
     }
+
+    const hasCns = form.cns.replace(/\D/g, '').length > 0;
+    if (hasCns && !validarCNS(form.cns)) e.cns = 'CNS inválido';
+
     setErrors(e);
     return Object.keys(e).length === 0;
   }
@@ -55,7 +58,7 @@ export default function PacientesPage() {
     const data = {
       nomeCompleto: form.nomeCompleto,
       dataNascimento: form.dataNascimento,
-      cpf: form.cpf.replace(/\D/g, '') || undefined,
+      cpf: form.cpf.replace(/\D/g, ''),
       cns: form.cns.replace(/\D/g, '') || undefined,
     };
     if (editingId) {
@@ -161,7 +164,7 @@ export default function PacientesPage() {
               {errors.dataNascimento && <p className="mt-1 text-xs text-destructive">{errors.dataNascimento}</p>}
             </div>
             <div>
-              <Label>CPF</Label>
+              <Label>CPF *</Label>
               <Input
                 value={form.cpf}
                 onChange={e => {
@@ -181,7 +184,6 @@ export default function PacientesPage() {
               />
               {errors.cns && <p className="mt-1 text-xs text-destructive">{errors.cns}</p>}
             </div>
-            {errors.documento && <p className="text-xs text-destructive">{errors.documento}</p>}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancelar</Button>
               <Button onClick={handleSubmit}>{editingId ? 'Salvar' : 'Cadastrar'}</Button>

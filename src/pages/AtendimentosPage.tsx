@@ -1,7 +1,7 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useApp } from '@/contexts/AppContext';
-import { ProcedimentoAtendimento } from '@/types';
-import { buscarProcedimentos, buscarProcedimento } from '@/data/procedimentos-sus';
+import { ProcedimentoAtendimento, AnexoImagem } from '@/types';
+import { buscarProcedimentos, buscarProcedimento, procedimentoRequerImagem } from '@/data/procedimentos-sus';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -10,8 +10,35 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, X, Search } from 'lucide-react';
+import { Plus, X, Search, Upload, Image, Download } from 'lucide-react';
 import { toast } from 'sonner';
+
+const ACCEPTED_IMAGE_TYPES = '.jpg,.jpeg,.png,.dcm';
+
+async function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function convertToWebP(base64: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new window.Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d')!;
+      ctx.drawImage(img, 0, 0);
+      resolve(canvas.toDataURL('image/webp', 0.85));
+    };
+    img.onerror = () => resolve(base64); // fallback
+    img.src = base64;
+  });
+}
 
 export default function AtendimentosPage() {
   const { atendimentos, profissionais, pacientes, addAtendimento, getPaciente, getProfissional } = useApp();
@@ -23,6 +50,7 @@ export default function AtendimentosPage() {
   const [procSearch, setProcSearch] = useState('');
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [search, setSearch] = useState('');
+  const fileInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
 
   const procResults = procSearch.length >= 2 ? buscarProcedimentos(procSearch) : [];
 
@@ -54,12 +82,57 @@ export default function AtendimentosPage() {
     setProcedimentos(prev => prev.filter(p => p.codigoSUS !== codigo));
   }
 
+  async function handleFileUpload(codigoSUS: string, file: File) {
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    if (!['jpg', 'jpeg', 'png', 'dcm'].includes(ext || '')) {
+      toast.error('Formato não aceito. Use JPG, PNG ou DICOM (.dcm).');
+      return;
+    }
+
+    const base64Original = await fileToBase64(file);
+    const isDicom = ext === 'dcm';
+
+    let dadosWebP: string;
+    if (isDicom) {
+      // DICOM: não podemos converter diretamente no browser, usar placeholder
+      dadosWebP = ''; // Será tratado na exibição
+    } else {
+      dadosWebP = await convertToWebP(base64Original);
+    }
+
+    const anexo: AnexoImagem = {
+      nomeArquivo: file.name,
+      tipoOriginal: isDicom ? 'application/dicom' : file.type,
+      dadosOriginal: base64Original,
+      dadosWebP,
+    };
+
+    setProcedimentos(prev => prev.map(p =>
+      p.codigoSUS === codigoSUS ? { ...p, anexoImagem: anexo } : p
+    ));
+    toast.success(`Imagem "${file.name}" anexada com sucesso!`);
+  }
+
+  function downloadOriginal(anexo: AnexoImagem) {
+    const link = document.createElement('a');
+    link.href = anexo.dadosOriginal;
+    link.download = anexo.nomeArquivo;
+    link.click();
+  }
+
   function handleSubmit() {
     const e: Record<string, string> = {};
     if (!pacienteId) e.paciente = 'Selecione um paciente';
     if (!profissionalId) e.profissional = 'Selecione um profissional';
     if (!dataAtendimento) e.data = 'Informe a data do atendimento';
     if (procedimentos.length === 0) e.procedimentos = 'Adicione ao menos um procedimento';
+
+    // Verificar se procedimentos que requerem imagem têm anexo
+    const semAnexo = procedimentos.filter(p => procedimentoRequerImagem(p.codigoSUS) && !p.anexoImagem);
+    if (semAnexo.length > 0) {
+      e.anexos = `Anexe imagem para: ${semAnexo.map(p => p.descricao).join(', ')}`;
+    }
+
     setErrors(e);
     if (Object.keys(e).length > 0) return;
 
@@ -137,6 +210,7 @@ export default function AtendimentosPage() {
                           {a.procedimentos.map(p => (
                             <Badge key={p.codigoSUS} variant={p.classificacao === 'BPA-C' ? 'default' : 'secondary'} className="text-[10px]">
                               {p.classificacao}
+                              {p.anexoImagem && <Image className="ml-1 inline h-3 w-3" />}
                             </Badge>
                           ))}
                         </div>
@@ -209,22 +283,69 @@ export default function AtendimentosPage() {
                 )}
               </div>
               {errors.procedimentos && <p className="mt-1 text-xs text-destructive">{errors.procedimentos}</p>}
+              {errors.anexos && <p className="mt-1 text-xs text-destructive">{errors.anexos}</p>}
             </div>
 
             {procedimentos.length > 0 && (
-              <div className="space-y-2 rounded-md border border-border p-3">
-                {procedimentos.map(p => (
-                  <div key={p.codigoSUS} className="flex items-center justify-between gap-2 text-sm">
-                    <div className="flex-1">
-                      <span className="font-mono text-xs text-muted-foreground">{p.codigoSUS}</span>
-                      <span className="ml-2">{p.descricao}</span>
+              <div className="space-y-3 rounded-md border border-border p-3">
+                {procedimentos.map(p => {
+                  const requerImagem = procedimentoRequerImagem(p.codigoSUS);
+                  return (
+                    <div key={p.codigoSUS} className="space-y-2">
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <div className="flex-1">
+                          <span className="font-mono text-xs text-muted-foreground">{p.codigoSUS}</span>
+                          <span className="ml-2">{p.descricao}</span>
+                        </div>
+                        <Badge variant={p.classificacao === 'BPA-C' ? 'default' : 'secondary'} className="text-[10px]">{p.classificacao}</Badge>
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeProc(p.codigoSUS)}>
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+
+                      {requerImagem && (
+                        <div className="ml-4 rounded border border-dashed border-border p-2">
+                          {p.anexoImagem ? (
+                            <div className="flex items-center gap-3">
+                              {p.anexoImagem.dadosWebP ? (
+                                <img src={p.anexoImagem.dadosWebP} alt="Radiografia" className="h-16 w-16 rounded object-cover" />
+                              ) : (
+                                <div className="flex h-16 w-16 items-center justify-center rounded bg-muted text-xs text-muted-foreground">DICOM</div>
+                              )}
+                              <div className="flex-1 text-xs text-muted-foreground">{p.anexoImagem.nomeArquivo}</div>
+                              <Button variant="outline" size="sm" className="gap-1 text-xs" onClick={() => downloadOriginal(p.anexoImagem!)}>
+                                <Download className="h-3 w-3" /> Original
+                              </Button>
+                              <Button variant="ghost" size="sm" className="text-xs text-destructive" onClick={() => {
+                                setProcedimentos(prev => prev.map(pr => pr.codigoSUS === p.codigoSUS ? { ...pr, anexoImagem: undefined } : pr));
+                              }}>
+                                Remover
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center gap-2">
+                              <Upload className="h-4 w-4 text-muted-foreground" />
+                              <span className="text-xs text-muted-foreground">Anexar radiografia (JPG, PNG ou DICOM)</span>
+                              <input
+                                ref={el => { fileInputRefs.current[p.codigoSUS] = el; }}
+                                type="file"
+                                accept={ACCEPTED_IMAGE_TYPES}
+                                className="hidden"
+                                onChange={e => {
+                                  const file = e.target.files?.[0];
+                                  if (file) handleFileUpload(p.codigoSUS, file);
+                                }}
+                              />
+                              <Button variant="outline" size="sm" className="text-xs" onClick={() => fileInputRefs.current[p.codigoSUS]?.click()}>
+                                Selecionar arquivo
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
-                    <Badge variant={p.classificacao === 'BPA-C' ? 'default' : 'secondary'} className="text-[10px]">{p.classificacao}</Badge>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => removeProc(p.codigoSUS)}>
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 
