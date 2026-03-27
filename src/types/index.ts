@@ -12,9 +12,24 @@ export interface Paciente {
   id: string;
   nomeCompleto: string;
   dataNascimento: string;
-  cpf?: string;
+  cpf: string;
   cns?: string;
   criadoEm: string;
+}
+
+export interface AnexoImagem {
+  nomeArquivo: string;
+  tipoOriginal: string; // 'image/jpeg' | 'image/png' | 'application/dicom'
+  dadosOriginal: string; // base64 do arquivo original
+  dadosWebP: string; // base64 da versão WebP para visualização
+}
+
+export interface ProcedimentoAtendimento {
+  codigoSUS: string;
+  descricao: string;
+  classificacao: 'BPA-C' | 'BPA-I';
+  quantidade: number;
+  anexoImagem?: AnexoImagem;
 }
 
 export interface Atendimento {
@@ -26,17 +41,11 @@ export interface Atendimento {
   criadoEm: string;
 }
 
-export interface ProcedimentoAtendimento {
-  codigoSUS: string;
-  descricao: string;
-  classificacao: 'BPA-C' | 'BPA-I';
-  quantidade: number;
-}
-
 export interface ProcedimentoSUS {
   codigo: string;
   descricao: string;
   classificacao: 'BPA-C' | 'BPA-I';
+  requerAnexoImagem: boolean;
 }
 
 export type UserRole = 'gestor' | 'operador' | 'profissional' | 'digitador';
